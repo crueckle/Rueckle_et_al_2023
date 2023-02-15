@@ -1,0 +1,727 @@
+---
+title: "SLAMSeq 2021_20_koertel final analysis"
+author:
+- name: Cornelia Rueckle
+  affiliation: c.rueckle@imb-mainz.de
+output:
+  BiocStyle::pdf_document
+abstract: |
+  Analysis of SLAM Seq data
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F, fig.path = "./figures")
+```
+
+
+```{r package import, echo=FALSE, message=FALSE, warning=FALSE}
+## load libraries
+library(gridExtra)
+library(stringr)# needed for str_sub()
+library(ggplot2)
+library(dplyr)
+library(minpack.lm)
+library(rtracklayer)
+
+
+
+level_order_mouse <- c(paste("chr", seq(1:19), sep = ""), "chrX")
+```
+
+# Processing data with SLAMDUNK
+
+Reads were mapped using SLAMDUNK with default parameters and: -5 12 -n 100 -m
+
+Reads were filtered using SLAMDUNK filter with default parameters
+
+For SNP annotation, all unlabelled samples were merged and SNPs were called using SLAMDUNK snp with default parameters and  -f 0.2.
+
+Transition rates were calculated SLAMDUNK count with default parameters providing the SNP annotation file of unlabelled samples (-v).
+
+If more than one UTR per gene was remaining, they were collapsed using SLAMDUNK collapse
+
+# How many reads are mapped
+
+
+
+# Data preparation
+
+For each time-point, four replicate experiments have been conducted. For each time-point, I will generate one file which includes the mean T2C convertions from all replicates and also the mean T coverage (will be used for expression estimation). 
+
++ no4SU (DMSOx4, STM2457 x 4)
++ T0 (DMSOx4, STM2457 x 4)
++ T1 (DMSOx4, STM2457 x 4)
++ T2 (DMSOx4, STM2457 x 4)
++ T3 (DMSOx4, STM2457 x 4)
++ T4 (DMSOx4, STM2457 x __3__)
++ T5 (DMSOx4, STM2457 x 4)
++ T6 (DMSOx4, STM2457 x 4)
++ T7 (DMSOx4, STM2457 x 4)
+
+*One replicate in STM is missing due to too low RNA (STM2457 T4)*
+
+```{r Data import, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+#Import data
+opt = data.frame(filepath="~/Documents/SLAM_seq/imb_koenig_2021_20_koertel_SLAM_seq/All_FC/Analysis/collapse/")
+
+##Import datasets
+files   <- list.files(opt$filepath,pattern="*.csv",full.names=F)
+
+S4U.data        <- lapply(paste0(opt$filepath,files),function(x) {read.csv(x, header = TRUE, sep="\t",  comment.char = "#")})
+
+#Reduce names of files to only important names
+names(S4U.data) <- gsub(".fastq.gz.merged.fastq_slamdunk_mapped_filtered_tcount_collapsed.csv", "", files)
+names(S4U.data) <-gsub(".*imb_koenig_2021_20_","",names(S4U.data))
+
+data_DMSO <- S4U.data[grep("DMSO", names(S4U.data))]
+stopifnot(length(data_DMSO)==36)
+data_STM2457 <- S4U.data[grep("STM", names(S4U.data))]
+stopifnot(length(data_STM2457)==35)
+
+
+
+
+```
+
+
+# Incorporation rate
+## Check conversion rates
+
+```{r Conversion rates, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+ploting_data <- S4U.data
+
+
+for (i in 1:length(S4U.data)){
+  S4U.data[[i]]$name <- names(S4U.data[i])}
+
+S4U.data$name <-NULL
+
+plot_data <-S4U.data %>%
+  bind_rows() 
+
+plot_data$Incoorp_rate_percent <- (plot_data$conversionsOnTs/plot_data$coverageOnTs)*100
+
+#ggplot(data=plot_data)+
+  #geom_boxplot(aes(x=name, y=Incoorp_rate_percent))
+
+plot_data$name <-str_sub(plot_data$name, 4, -4)
+
+mean(c(na.omit((plot_data[plot_data$name=="T0_DMSO",]$Incoorp_rate_percent),
+       na.omit(plot_data[plot_data$name=="T0_STM2457",]$Incoorp_rate_percent))))
+
+ggplot()+
+  geom_boxplot(data=plot_data, aes(x=name, y=Incoorp_rate_percent, fill=name), outlier.shape = NA)+
+    #scale_fill_brewer()+
+  coord_cartesian(ylim = c(0,2))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  ylab("Incoorporation rate [%]")+
+  theme(legend.position='none')
+
+
+```
+
+
+# Make mean
+
+In order to calculate half-lives, mean transition rates for each sample are from all replicates.
+```{r Make mean incoorp, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+
+######################################################
+######################################################
+######################################################
+
+### DMSO
+data_DMSO_no4SU <- S4U.data$`01_no4SU_DMSO_01`
+
+
+data_DMSO_no4SU$conversionRate_mean=(as.numeric(S4U.data$`01_no4SU_DMSO_01`$conversionRate)+as.numeric(S4U.data$`02_no4SU_DMSO_02`$conversionRate)+as.numeric(S4U.data$`03_no4SU_DMSO_03`$conversionRate)+as.numeric(S4U.data$`04_no4SU_DMSO_04`$conversionRate))/4
+
+
+data_DMSO_no4SU$coverageOnTs_mean=(as.numeric(S4U.data$`01_no4SU_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`02_no4SU_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`03_no4SU_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`04_no4SU_DMSO_04`$coverageOnTs))/4
+
+
+### DMSO T0
+
+data_DMSO_T0 <- S4U.data$`09_T0_DMSO_01`
+
+data_DMSO_T0$conversionRate_mean=(as.numeric(S4U.data$`09_T0_DMSO_01`$conversionRate)+as.numeric(S4U.data$`10_T0_DMSO_02`$conversionRate)+as.numeric(S4U.data$`11_T0_DMSO_03`$conversionRate)+as.numeric(S4U.data$`12_T0_DMSO_04`$conversionRate))/4
+
+data_DMSO_T0$coverageOnTs_mean=(as.numeric(S4U.data$`09_T0_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`10_T0_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`11_T0_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`12_T0_DMSO_04`$coverageOnTs))/4
+
+### DMSO T1
+
+data_DMSO_T1 <- S4U.data$`17_T1_DMSO_01`
+
+data_DMSO_T1$conversionRate_mean=(as.numeric(S4U.data$`17_T1_DMSO_01`$conversionRate)+as.numeric(S4U.data$`18_T1_DMSO_02`$conversionRate)+as.numeric(S4U.data$`19_T1_DMSO_03`$conversionRate)+as.numeric(S4U.data$`20_T1_DMSO_04`$conversionRate))/4
+
+data_DMSO_T1$coverageOnTs_mean=(as.numeric(S4U.data$`17_T1_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`18_T1_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`19_T1_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`20_T1_DMSO_04`$coverageOnTs))/4
+### DMSO T2
+
+data_DMSO_T2 <- S4U.data$`25_T2_DMSO_01`
+
+data_DMSO_T2$conversionRate_mean=(as.numeric(S4U.data$`25_T2_DMSO_01`$conversionRate)+as.numeric(S4U.data$`26_T2_DMSO_02`$conversionRate)+as.numeric(S4U.data$`27_T2_DMSO_03`$conversionRate)+as.numeric(S4U.data$`28_T2_DMSO_04`$conversionRate))/4
+
+
+data_DMSO_T2$coverageOnTs_mean=(as.numeric(S4U.data$`25_T2_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`26_T2_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`27_T2_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`28_T2_DMSO_04`$coverageOnTs))/4
+### DMSO T3
+
+data_DMSO_T3 <- S4U.data$`33_T3_DMSO_01`
+
+data_DMSO_T3$conversionRate_mean=(as.numeric(S4U.data$`33_T3_DMSO_01`$conversionRate)+as.numeric(S4U.data$`34_T3_DMSO_02`$conversionRate)+as.numeric(S4U.data$`35_T3_DMSO_03`$conversionRate)+as.numeric(S4U.data$`36_T3_DMSO_04`$conversionRate))/4
+
+data_DMSO_T3$coverageOnTs_mean=(as.numeric(S4U.data$`33_T3_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`34_T3_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`35_T3_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`36_T3_DMSO_04`$coverageOnTs))/4
+
+### DMSO T4
+
+data_DMSO_T4 <- S4U.data$`41_T4_DMSO_01`
+
+data_DMSO_T4$conversionRate_mean=(as.numeric(S4U.data$`41_T4_DMSO_01`$conversionRate)+as.numeric(S4U.data$`42_T4_DMSO_02`$conversionRate)+as.numeric(S4U.data$`43_T4_DMSO_03`$conversionRate)+as.numeric(S4U.data$`44_T4_DMSO_04`$conversionRate))/4
+
+data_DMSO_T4$coverageOnTs_mean=(as.numeric(S4U.data$`41_T4_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`42_T4_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`43_T4_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`44_T4_DMSO_04`$coverageOnTs))/4
+
+### DMSO T5
+
+data_DMSO_T5 <- S4U.data$`48_T5_DMSO_01`
+
+data_DMSO_T5$conversionRate_mean=(as.numeric(S4U.data$`48_T5_DMSO_01`$conversionRate)+as.numeric(S4U.data$`49_T5_DMSO_02`$conversionRate)+as.numeric(S4U.data$`50_T5_DMSO_03`$conversionRate)+as.numeric(S4U.data$`51_T5_DMSO_04`$conversionRate))/4
+
+data_DMSO_T5$coverageOnTs_mean=(as.numeric(S4U.data$`48_T5_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`49_T5_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`50_T5_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`51_T5_DMSO_04`$coverageOnTs))/4
+
+### DMSO T6
+
+data_DMSO_T6 <- S4U.data$`56_T6_DMSO_01`
+
+data_DMSO_T6$conversionRate_mean=(as.numeric(S4U.data$`56_T6_DMSO_01`$conversionRate)+as.numeric(S4U.data$`57_T6_DMSO_02`$conversionRate)+as.numeric(S4U.data$`58_T6_DMSO_03`$conversionRate)+as.numeric(S4U.data$`59_T6_DMSO_04`$conversionRate))/4
+
+data_DMSO_T6$coverageOnTs_mean=(as.numeric(S4U.data$`56_T6_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`57_T6_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`58_T6_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`59_T6_DMSO_04`$coverageOnTs))/4
+
+### DMSO T6
+
+data_DMSO_T7 <- S4U.data$`64_T7_DMSO_01`
+
+data_DMSO_T7$conversionRate_mean=(as.numeric(S4U.data$`64_T7_DMSO_01`$conversionRate)+as.numeric(S4U.data$`65_T7_DMSO_02`$conversionRate)+as.numeric(S4U.data$`66_T7_DMSO_03`$conversionRate)+as.numeric(S4U.data$`67_T7_DMSO_04`$conversionRate))/4
+
+data_DMSO_T7$coverageOnTs_mean=(as.numeric(S4U.data$`64_T7_DMSO_01`$coverageOnTs)+as.numeric(S4U.data$`65_T7_DMSO_02`$coverageOnTs)+as.numeric(S4U.data$`66_T7_DMSO_03`$coverageOnTs)+as.numeric(S4U.data$`67_T7_DMSO_04`$coverageOnTs))/4
+
+#data_DMSO <- data_DMSO[grep("no4SU", names(data_DMSO))][grep("conversionRate", )]
+#grep("conversionRate", colnames(data_DMSO[grep("no4SU", names(data_DMSO))]))
+
+DMSO_4SU_mean_data <- list(data_DMSO_T0,
+                           data_DMSO_T1,
+                           data_DMSO_T2,
+                           data_DMSO_T3,
+                           data_DMSO_T4,
+                           data_DMSO_T5,
+                           data_DMSO_T6,
+                           data_DMSO_T7)
+
+names(DMSO_4SU_mean_data) <- c("DMSO_T0",
+                           "DMSO_T1",
+                           "DMSO_T2",
+                           "DMSO_T3",
+                           "DMSO_T4",
+                           "DMSO_T5",
+                           "DMSO_T6",
+                           "DMSO_T7")
+
+######################################################
+######################################################
+######################################################
+
+
+### STM2457
+data_STM2457_no4SU <- S4U.data$`05_no4SU_STM2457_01`
+
+
+data_STM2457_no4SU$conversionRate_mean=(as.numeric(S4U.data$`05_no4SU_STM2457_01`$conversionRate)+as.numeric(S4U.data$`06_no4SU_STM2457_02`$conversionRate)+as.numeric(S4U.data$`07_no4SU_STM2457_03`$conversionRate)+as.numeric(S4U.data$`08_no4SU_STM2457_04`$conversionRate))/4
+
+data_STM2457_no4SU$coverageOnTs_mean=(as.numeric(S4U.data$`05_no4SU_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`06_no4SU_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`07_no4SU_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`08_no4SU_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T0
+
+data_STM2457_T0 <- S4U.data$`13_T0_STM2457_01`
+
+data_STM2457_T0$conversionRate_mean=(as.numeric(S4U.data$`13_T0_STM2457_01`$conversionRate)+as.numeric(S4U.data$`14_T0_STM2457_02`$conversionRate)+as.numeric(S4U.data$`15_T0_STM2457_03`$conversionRate)+as.numeric(S4U.data$`16_T0_STM2457_04`$conversionRate))/4
+
+data_STM2457_T0$coverageOnTs_mean=(as.numeric(S4U.data$`13_T0_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`14_T0_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`15_T0_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`16_T0_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T1
+
+data_STM2457_T1 <- S4U.data$`21_T1_STM2457_01`
+
+data_STM2457_T1$conversionRate_mean=(as.numeric(S4U.data$`21_T1_STM2457_01`$conversionRate)+as.numeric(S4U.data$`22_T1_STM2457_02`$conversionRate)+as.numeric(S4U.data$`23_T1_STM2457_03`$conversionRate)+as.numeric(S4U.data$`24_T1_STM2457_04`$conversionRate))/4
+
+
+data_STM2457_T1$coverageOnTs_mean=(as.numeric(S4U.data$`21_T1_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`22_T1_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`23_T1_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`24_T1_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T2
+
+data_STM2457_T2 <- S4U.data$`29_T2_STM2457_01`
+
+data_STM2457_T2$conversionRate_mean=(as.numeric(S4U.data$`29_T2_STM2457_01`$conversionRate)+as.numeric(S4U.data$`30_T2_STM2457_02`$conversionRate)+as.numeric(S4U.data$`31_T2_STM2457_03`$conversionRate)+as.numeric(S4U.data$`32_T2_STM2457_04`$conversionRate))/4
+
+data_STM2457_T2$coverageOnTs_mean=(as.numeric(S4U.data$`29_T2_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`30_T2_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`31_T2_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`32_T2_STM2457_04`$coverageOnTs))/4
+### STM2457 T3
+
+data_STM2457_T3 <- S4U.data$`37_T3_STM2457_01`
+
+data_STM2457_T3$conversionRate_mean=(as.numeric(S4U.data$`37_T3_STM2457_01`$conversionRate)+as.numeric(S4U.data$`38_T3_STM2457_02`$conversionRate)+as.numeric(S4U.data$`39_T3_STM2457_03`$conversionRate)+as.numeric(S4U.data$`40_T3_STM2457_04`$conversionRate))/4
+
+data_STM2457_T3$coverageOnTs_mean=(as.numeric(S4U.data$`37_T3_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`38_T3_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`39_T3_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`40_T3_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T4
+
+data_STM2457_T4 <- S4U.data$`45_T4_STM2457_01`
+
+data_STM2457_T4$conversionRate_mean=(as.numeric(S4U.data$`45_T4_STM2457_01`$conversionRate)+as.numeric(S4U.data$`46_T4_STM2457_02`$conversionRate)+as.numeric(S4U.data$`47_T4_STM2457_03`$conversionRate))/3
+
+
+data_STM2457_T4$coverageOnTs_mean=(as.numeric(S4U.data$`45_T4_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`46_T4_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`47_T4_STM2457_03`$coverageOnTs))/3
+
+### STM2457 T5
+
+data_STM2457_T5 <- S4U.data$`52_T5_STM2457_01`
+
+data_STM2457_T5$conversionRate_mean=(as.numeric(S4U.data$`52_T5_STM2457_01`$conversionRate)+as.numeric(S4U.data$`53_T5_STM2457_02`$conversionRate)+as.numeric(S4U.data$`54_T5_STM2457_03`$conversionRate)+as.numeric(S4U.data$`55_T5_STM2457_04`$conversionRate))/4
+
+data_STM2457_T5$coverageOnTs_mean=(as.numeric(S4U.data$`52_T5_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`53_T5_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`54_T5_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`55_T5_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T6
+
+data_STM2457_T6 <- S4U.data$`60_T6_STM2457_01`
+
+data_STM2457_T6$conversionRate_mean=(as.numeric(S4U.data$`60_T6_STM2457_01`$conversionRate)+as.numeric(S4U.data$`61_T6_STM2457_02`$conversionRate)+as.numeric(S4U.data$`62_T6_STM2457_03`$conversionRate)+as.numeric(S4U.data$`63_T6_STM2457_04`$conversionRate))/4
+
+data_STM2457_T6$coverageOnTs_mean=(as.numeric(S4U.data$`60_T6_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`61_T6_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`62_T6_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`63_T6_STM2457_04`$coverageOnTs))/4
+
+### STM2457 T7
+
+data_STM2457_T7 <- S4U.data$`68_T7_STM2457_01`
+
+data_STM2457_T7$conversionRate_mean=(as.numeric(S4U.data$`68_T7_STM2457_01`$conversionRate)+as.numeric(S4U.data$`69_T7_STM2457_02`$conversionRate)+as.numeric(S4U.data$`70_T7_STM2457_03`$conversionRate)+as.numeric(S4U.data$`71_T7_STM2457_04`$conversionRate))/4
+
+data_STM2457_T7$coverageOnTs_mean=(as.numeric(S4U.data$`68_T7_STM2457_01`$coverageOnTs)+as.numeric(S4U.data$`69_T7_STM2457_02`$coverageOnTs)+as.numeric(S4U.data$`70_T7_STM2457_03`$coverageOnTs)+as.numeric(S4U.data$`71_T7_STM2457_04`$coverageOnTs))/4
+
+
+STM2457_4SU_mean_data <- list(data_STM2457_T0,
+                           data_STM2457_T1,
+                           data_STM2457_T2,
+                           data_STM2457_T3,
+                           data_STM2457_T4,
+                           data_STM2457_T5,
+                           data_STM2457_T6,
+                           data_STM2457_T7)
+
+names(STM2457_4SU_mean_data) <- c("STM2457_T0",
+                           "STM2457_T1",
+                           "STM2457_T2",
+                           "STM2457_T3",
+                           "STM2457_T4",
+                           "STM2457_T5",
+                           "STM2457_T6",
+                           "STM2457_T7")
+```
+
+## Substract background T2C from 4SU data
+
+In order to normalize T2C transitions to the background transition rate, conversion rates of the unlabelled samples are substracted from all conversion rates of labelled samples
+
+
+### DMSO
+```{r Background substraction, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+# no 4SU data is >>>data_DMSO_no4SU 
+
+##Substract background
+for (i in 1:length(DMSO_4SU_mean_data)){
+  DMSO_4SU_mean_data[[i]]$conversionRate_mean_background_sub <- DMSO_4SU_mean_data[[i]]$conversionRate_mean-data_DMSO_no4SU$conversionRate_mean}
+
+# Normalize zu chase onset
+onset_DMSO <- DMSO_4SU_mean_data$DMSO_T0
+
+chase <- DMSO_4SU_mean_data
+
+
+for (i in 1:length(chase)){
+  chase[[i]]$norm_T2C <- chase[[i]]$conversionRate_mean_background_sub/onset_DMSO$conversionRate_mean_background_sub}
+
+#give dset name column
+for (i in 1:length(chase)){
+  chase[[i]]$timepoints <- as.numeric(gsub("(DMSO_T)*", "", names(chase[i])))
+}
+
+
+
+for (i in 1:length(chase)){
+  chase[[i]]$gene_coords <-paste0(chase[[i]]$Chromosome, chase[[i]]$Start, ":", chase[[i]]$End)
+}
+
+
+chase_finale<-do.call("rbind",chase)
+
+chase_filtered=na.omit(chase_finale)
+
+chase_filtered <- chase_filtered[!is.infinite(chase_filtered$norm_T2C),]
+
+
+
+
+
+```
+
+
+## STM2457
+```{r Background substraction STM2457, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+
+
+##Substract background
+for (i in 1:length(STM2457_4SU_mean_data)){
+  STM2457_4SU_mean_data[[i]]$conversionRate_mean_background_sub <- STM2457_4SU_mean_data[[i]]$conversionRate_mean-data_STM2457_no4SU$conversionRate_mean}
+
+# Normalize zu chase onset
+onset_STM2457 <- STM2457_4SU_mean_data$STM2457_T0
+
+chase_STM <- STM2457_4SU_mean_data
+
+
+for (i in 1:length(chase_STM)){
+  chase_STM[[i]]$norm_T2C <- chase_STM[[i]]$conversionRate_mean_background_sub/onset_STM2457$conversionRate_mean_background_sub}
+
+#give dset name column
+for (i in 1:length(chase_STM)){
+  chase_STM[[i]]$timepoints <- as.numeric(gsub("(STM2457_T)*", "", names(chase_STM[i])))
+}
+
+
+
+
+
+
+chase_finale_STM<-do.call("rbind",chase_STM)
+
+chase_filtered_STM=na.omit(chase_finale_STM)
+
+chase_filtered_STM <- chase_filtered_STM[!is.infinite(chase_filtered_STM$norm_T2C),]
+#halflife
+chase_filtered_STM$timepoints_experiment <- chase_filtered_STM$timepoints
+
+chase_filtered_STM[chase_filtered_STM$timepoints==2,]$timepoints <- 1.5
+chase_filtered_STM[chase_filtered_STM$timepoints==3,]$timepoints <- 2.3
+chase_filtered_STM[chase_filtered_STM$timepoints==4,]$timepoints <- 3.5
+chase_filtered_STM[chase_filtered_STM$timepoints==5,]$timepoints <- 5.3
+chase_filtered_STM[chase_filtered_STM$timepoints==6,]$timepoints <- 8
+chase_filtered_STM[chase_filtered_STM$timepoints==7,]$timepoints <- 12
+
+
+
+```
+
+
+# Expression distribution
+
+We decided to use the coverage on Ts as an expression estimate. Cutoff >100 coverage on T. 
+
+
+```{r Expression distribution, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+#DMSO
+ggplot(chase_filtered)+
+  geom_density(aes(x=log10(coverageOnTs)))+
+  geom_vline(xintercept = log10(100))+
+  ggtitle("DMSO, cutoff 100")-> expression_DMSO
+
+
+
+ggplot(chase_filtered_STM)+
+  geom_density(aes(x=log10(coverageOnTs)))+
+  geom_vline(xintercept = log10(100))+
+  ggtitle("STM2457, cutoff 100")-> expression_stm
+
+
+
+grid.arrange(expression_DMSO, expression_stm, ncol=2)
+
+
+
+
+
+
+
+
+```
+
+
+
+
+T coverage of 100: reads are length 84, after trimming ~70. In 70 bp, probably around 17 Ts are present. to have a coverage of 100 we would need only around 6 reads. 
+
+T coverage of 1500: reads are length 84, after trimming ~70. In 70 bp, probably around 17 Ts are present. to have a coverage of 1500 we would need only around 90 reads. 
+
+# Prepare halflife
+
++ Merge replicates, get mean C>T from foure replicates
++ Subtract T>C conversions of each time point from the T>C of No 4SU treatment (background subtraction)
++ Normalize to chase onset (Divide by chase onset C>T 0h)
++ Curve fitting using integrated rate law for a first-order reaction (min-pack.lm package) lineqr regression. 
++ Set half lifes >24 h to 24 h
+
+```{r Halflife calculation DMSO, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+calculate_model2 <- function(gene_data){
+  tryCatch({
+    model = nlsLM(norm_T2C ~ exp(-k * timepoints),
+            data = gene_data,
+            start=list(k = 0.5),
+            lower = 0,
+            control = nls.lm.control(maxiter = 1000),
+            na.action = na.omit)
+    return(broom::augment(model, gene_data) %>%
+             mutate(halflife = log(2)/coef(model)["k"],
+                    residual_sd_error = summary(model)$sigma))
+  }, error = function(err){gene_data %>%
+      mutate(.fitted = NA, .resid = NA, halflife = NA, residual_sd_error=NA)})
+}
+
+chase_filtered$timepoints_experiment <- chase_filtered$timepoints
+
+chase_filtered[chase_filtered$timepoints==2,]$timepoints <- 1.5
+chase_filtered[chase_filtered$timepoints==3,]$timepoints <- 2.3
+chase_filtered[chase_filtered$timepoints==4,]$timepoints <- 3.5
+chase_filtered[chase_filtered$timepoints==5,]$timepoints <- 5.3
+chase_filtered[chase_filtered$timepoints==6,]$timepoints <- 8
+chase_filtered[chase_filtered$timepoints==7,]$timepoints <- 12
+
+  
+result_TA_DMSO <- chase_filtered%>%
+  dplyr::group_by(gene_name) %>%
+  dplyr::mutate(T_coverage_mean = mean(coverageOnTs_mean))%>%
+  dplyr::filter(T_coverage_mean>=100)%>%
+  dplyr::group_modify(~ calculate_model2(.)) %>%
+  dplyr::bind_rows()
+
+result_TA_halflife_DMSO <- result_TA_DMSO %>%
+  dplyr::select(gene_name, halflife, residual_sd_error,T_coverage_mean) %>%
+  unique()
+
+result_TA_halflife_DMSO <- as.data.frame(result_TA_halflife_DMSO)
+
+
+result_TA_halflife_DMSO<- result_TA_halflife_DMSO[!is.infinite(result_TA_halflife_DMSO$halflife),]
+
+
+# Set high halflifes to 24 
+
+result_TA_halflife_DMSO[result_TA_halflife_DMSO$halflife>24,]$halflife <- 24
+
+result_TA_halflife_DMSO$dset <- "DMSO"
+
+#get gene anno
+
+genes <- import.gff("~/Documents/Annotations/gencode.vM23.chr_patch_hapl_scaff.annotation.gtf", format="gtf", feature.type="gene")
+genes<- genes[seqnames(genes)%in%level_order_mouse]
+genes$chr <- as.character(seqnames(genes))
+
+result_TA_halflife_DMSO$chr = NA
+result_TA_halflife_DMSO$chr<-sapply(result_TA_halflife_DMSO$gene_name, function(x) unique(as.character(seqnames(genes[genes$gene_name==x]))))
+
+
+result_TA_halflife_DMSO$chr <- as.character(result_TA_halflife_DMSO$chr)
+
+
+result_TA_halflife_DMSO<-result_TA_halflife_DMSO[result_TA_halflife_DMSO$chr%in%level_order_mouse,]
+
+
+result_TA_halflife_DMSO$gene_id = NA
+result_TA_halflife_DMSO$gene_id<-sapply(result_TA_halflife_DMSO$gene_name, function(x) unique(as.character(genes[genes$gene_name==x][1,]$gene_id)))
+
+result_TA_halflife_DMSO$gene_type = NA
+result_TA_halflife_DMSO$gene_type<-sapply(result_TA_halflife_DMSO$gene_name, function(x) unique(as.character(genes[genes$gene_name==x][1,]$gene_type)))
+
+
+
+
+result_TA_halflife_DMSO<- result_TA_halflife_DMSO[result_TA_halflife_DMSO$gene_type=="protein_coding",]
+
+
+
+result_TA_halflife_DMSO<- result_TA_halflife_DMSO[result_TA_halflife_DMSO$chr%in%level_order_mouse,]
+
+```
+
+
+## Halflife STM
+```{r Halflife calculation STM, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+result_TA_STM2457 <- chase_filtered_STM %>%
+  dplyr::group_by(gene_name) %>%
+  dplyr::mutate(T_coverage_mean = mean(coverageOnTs_mean))%>%
+  dplyr::filter(T_coverage_mean>=100)%>%
+  dplyr::group_modify(~ calculate_model2(.)) %>%
+  dplyr::bind_rows()
+
+
+result_TA_halflife_STM2457 <- result_TA_STM2457 %>%
+  dplyr::select(gene_name, halflife, residual_sd_error, T_coverage_mean) %>%
+  unique()
+
+
+result_TA_halflife_STM2457 <- as.data.frame(result_TA_halflife_STM2457)
+
+
+
+result_TA_halflife_STM2457<- result_TA_halflife_STM2457[!is.infinite(result_TA_halflife_STM2457$halflife),]
+
+
+
+
+
+result_TA_halflife_STM2457$chr = NA
+result_TA_halflife_STM2457$chr<-sapply(result_TA_halflife_STM2457$gene_name, function(x) unique(as.character(seqnames(genes[genes$gene_name==x]))))
+
+
+result_TA_halflife_STM2457$gene_id = NA
+result_TA_halflife_STM2457$gene_id<-sapply(result_TA_halflife_STM2457$gene_name, function(x) unique(as.character(genes[genes$gene_name==x][1,]$gene_id)))
+
+result_TA_halflife_STM2457$gene_type <- NA
+result_TA_halflife_STM2457$gene_type<-sapply(result_TA_halflife_STM2457$gene_name, function(x) unique(as.character(genes[genes$gene_name==x][1,]$gene_type)))
+
+
+result_TA_halflife_STM2457[result_TA_halflife_STM2457$halflife>24,]$halflife <- 24
+
+
+result_TA_halflife_STM2457<- result_TA_halflife_STM2457[result_TA_halflife_STM2457$gene_type=="protein_coding",]
+
+
+
+
+```
+
+
+# Evaluate fitting of halflife
+The residual standard error is the standard deviation of the residuals
+– Smaller residual standard error means predictions are better
+
+The Residual Standard Error is the average amount that the response (dist) will deviate from the true regression line.
+
+Residual standard error =
+
+where:
+
+y: The observed value
+yi: The predicted value
+df: The degrees of freedom, calculated as the total number of observations – total number of model parameters.
+
+The residuals of this model (the difference between the observed values and the predicted values) will be small, which means the residual standard error will also be small.
+
+```{r Evaluating, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+ggplot(data=result_TA_halflife_DMSO)+
+  geom_density(aes(x=log10(residual_sd_error)))
+
+
+ggplot(data=result_TA_halflife_DMSO)+
+  stat_ecdf(aes(x=residual_sd_error))+
+  coord_cartesian(xlim=c(0,5))+
+  geom_vline(xintercept = 0.3, linetype="dotted")
+
+
+paste0("Number of UTRs unfiltered:", nrow(result_TA_halflife_DMSO))
+
+result_TA_halflife_DMSO_filtered <- result_TA_halflife_DMSO[result_TA_halflife_DMSO$residual_sd_error<0.3,]
+
+paste0("Number of UTRs unfiltered:", nrow(result_TA_halflife_DMSO_filtered))
+
+
+
+```
+
+
+
+
+
+```{r Plotting individual utr, echo=FALSE, eval=TRUE, warning=FALSE,message=FALSE}
+
+
+
+###################################
+###################################
+###################################
+### This is for plotting the individual half lives
+###################################
+###################################
+###################################
+result_TA_DMSO$timepoints_hr <- rep(c(0,1,1.5,2.3,3.5,5.3,8,12), times=nrow(result_TA_DMSO)/8)
+
+
+fit_quantile <- quantile(result_TA_DMSO$residual_sd_error, probs=seq(from=0, to=1, by=0.1))
+
+
+result_TA_DMSO$fit_quantile=findInterval(result_TA_DMSO$residual_sd_error,fit_quantile)
+
+result_TA_DMSO<-data.frame(result_TA_DMSO)
+
+
+ggplot(data=result_TA_DMSO)+
+  geom_boxplot(aes(x=fit_quantile, y=residual_sd_error, group=fit_quantile))+
+  coord_cartesian(ylim = c(-1,2))
+
+ggplot(data=result_TA_DMSO)+
+  geom_boxplot(aes(x=fit_quantile, y=log10(coverageOnTs), group=fit_quantile))
+
+#Plot_them_all into a pdf
+plot_individual_utrs <- function(data_fitting, gene){
+  data_fitting <- data_fitting[data_fitting$gene_name==gene,]
+  data_fitting$coverageOnTs_mean<- mean(data_fitting$coverageOnTs)
+  ggplot(data=data_fitting)+
+  geom_point(aes(x=timepoints_hr, y=.fitted))+
+  geom_line(aes(x=timepoints_hr, y=.fitted))+
+  geom_point(aes(x=timepoints_hr, y=norm_T2C), color="grey")+
+  scale_x_continuous(breaks = data_fitting$timepoints_hr)+
+  geom_text(data=data_fitting[1,], aes(x=1, y=1.2,label=paste0("Fit: ", round(unique(residual_sd_error), digits=2))))+
+  geom_text(data=data_fitting[1,],aes(x=1, y=1.15,label=paste0("Fit quantile: ", fit_quantile)))+
+  geom_text(data=data_fitting[1,],aes(x=1, y=1.1,label=paste0("Halflife: ", round(halflife, digits=2))))+
+  geom_text(data=data_fitting[1,],aes(x=5, y=1.15,label=paste0("T-coverage mean: ", round(coverageOnTs_mean, digits=2))))+
+  geom_hline(yintercept = 0.5, linetype="dotted", color="grey")+
+  ggtitle(gene)}
+
+
+
+#plot_individual_utrs(result_TA_DMSO, "Tbp")
+
+#order to have best fitted on top
+result_TA_DMSO = result_TA_DMSO[order(result_TA_DMSO$fit_quantile, decreasing = FALSE),]
+
+#plots =lapply(unique(result_TA_DMSO$gene_name), function(x) plot_individual_utrs(result_TA_DMSO, x))
+
+# worst fit 
+
+#result_TA_DMSO_worst_fit <- result_TA_DMSO[result_TA_DMSO$fit_quantile==5,]
+
+#plots =lapply(unique(result_TA_DMSO_worst_fit$gene_name), function(x) plot_individual_utrs(result_TA_DMSO_worst_fit, x))
+
+#result_TA_DMSO[result_TA_DMSO$gene_name=="Ccdc173",]
+
+```
+
+We decided to do the residual error cutoff at 0.3.
+
+
+
+
+# Session info {.unnumbered}
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
