@@ -1,0 +1,392 @@
+---
+title: "imb_2021_05 mouse RNA Seq STM2457"
+author:
+- name: Cornelia Rueckle
+abstract: |
+  RNA Seq in mESC in WT and STM2457 conditions
+output:
+  BiocStyle::pdf_document
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F, fig.path = "./Figures_mouse")
+```
+
+
+```{r package import, echo=FALSE, message=FALSE, warning=FALSE}
+## load libraries
+
+library(gridExtra)
+library(ggplot2)
+library(cowplot)
+library(pairwiseCI)
+
+
+level_order_mouse <- c(paste("chr", seq(1:19), sep = ""), "chrX", "chrY")
+#autosomes <- c(paste("chr", seq(1:19), sep = ""))
+
+
+```
+
+# Log2FC overview
+
+## Import and filter data
+Filter out all genes with log2FC NA and/or p-value NA
+Filter out all genes with mean RPKM < 1. 
+
+
+```{r Import and filter data, echo=FALSE, message=FALSE, warning=FALSE}
+############
+#Import data
+rna_seq = read.csv("mESC_STM2457.vs.mESC_DMSO.csv", header=TRUE)
+
+
+#Calculate mean expression
+rna_seq$mean_FPKM_all = (rna_seq$mESC_DMSO_1.robustFPKM+
+                                    rna_seq$mESC_DMSO_2.robustFPKM+
+                                    rna_seq$mESC_DMSO_3.robustFPKM+
+                                    rna_seq$mESC_DMSO_4.robustFPKM+
+                                    rna_seq$mESC_STM2457_1.robustFPKM+
+                                    rna_seq$mESC_STM2457_2.robustFPKM+
+                                    rna_seq$mESC_STM2457_3.robustFPKM+
+                                    rna_seq$mESC_STM2457_4.robustFPKM)/8
+
+
+#Filter out NA
+rna_seq_filtered=rna_seq[!is.na(rna_seq$log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),]
+rna_seq_filtered=rna_seq_filtered[!is.na(rna_seq$BH.adjusted.p.values),]
+
+#Filter for minimal expression
+
+rna_seq_filtered <- rna_seq_filtered[rna_seq_filtered$mean_FPKM_all>1,]
+
+
+```
+
+
+# Plot log2FC per chromosome 
+```{r log2FC per chromosome, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Filter for sd chromosomes
+rna_seq_filtered_plot<- rna_seq_filtered[rna_seq_filtered$chr%in%level_order_mouse,]
+
+#Plot function
+
+log2fc_plot_chr <- function(data, chr){
+  ggplot(data, aes(x = log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO), color="black") + 
+  geom_density()+
+  coord_cartesian(xlim=c(-1.5,1.5))+
+  theme_bw()+
+  geom_density(data=data[data$chr==chr,], aes(x = log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO), color="red")+
+    ggtitle(paste0(chr,"_log2FC imb_koenig_2021_05"))}
+
+
+plots <- lapply(level_order_mouse, function(x) log2fc_plot_chr(rna_seq_filtered, x))
+
+cowplot::plot_grid(plotlist = plots[1:4], ncol = 2)
+cowplot::plot_grid(plotlist = plots[5:8], ncol = 2)
+cowplot::plot_grid(plotlist = plots[9:12], ncol = 2)
+cowplot::plot_grid(plotlist = plots[13:16], ncol = 2)
+cowplot::plot_grid(plotlist = plots[17:20], ncol = 2)
+
+
+# Plot as ECDF
+ggplot() + stat_ecdf(data=rna_seq_filtered[rna_seq_filtered$mean_FPKM_all>=1&!rna_seq_filtered$chr=="chrY"&
+                                             !rna_seq_filtered$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="azure4", size=1,
+                     geom = "step")+
+   stat_ecdf(data=rna_seq_filtered[rna_seq_filtered$mean_FPKM_all>=1&rna_seq_filtered$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="darkorange", size=1,
+                     geom = "step")+
+   stat_ecdf(data=rna_seq_filtered[rna_seq_filtered$spike_in=="yes",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="grey", linetype="dotted", size=1,
+                     geom = "step")+
+  theme_bw()+
+  ylab("Fraction of genes with given log2FC")+
+  coord_cartesian(xlim = c(-1.5,1.5))+
+  ggtitle("ECDF log2FC autosomes grey, x chrom orange, dotted line:Erccs")
+
+
+# Plot as ECDF with individual autosomes
+ggplot() + stat_ecdf(data=rna_seq_filtered_plot[rna_seq_filtered_plot$mean_FPKM_all>=1&!rna_seq_filtered_plot$chr=="chrY"&
+                                             !rna_seq_filtered_plot$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO, fill=chr),colour="azure4",
+                     geom = "step")+
+   stat_ecdf(data=rna_seq_filtered_plot[rna_seq_filtered_plot$mean_FPKM_all>=1&rna_seq_filtered_plot$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="darkorange",
+                     geom = "step")+
+  coord_cartesian(xlim = c(-1.5,1.5))+
+  theme_bw()+
+  ylab("Fraction of genes with given log2FC")+
+  ggtitle("ECDF log2FC autosomes grey, x chrom orange")
+
+
+# Plot ECDF with median line for all autosomes
+
+ggplot() + stat_ecdf(data=rna_seq_filtered_plot[rna_seq_filtered_plot$mean_FPKM_all>=1&!rna_seq_filtered_plot$chr=="chrY"&
+                                             !rna_seq_filtered_plot$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO, fill=chr),colour="azure4",
+                     geom = "step")+
+   stat_ecdf(data=rna_seq_filtered_plot[rna_seq_filtered_plot$mean_FPKM_all>=1&rna_seq_filtered_plot$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="darkorange",
+                     geom = "step")+
+   stat_ecdf(data=rna_seq_filtered_plot[rna_seq_filtered_plot$mean_FPKM_all>=1&!rna_seq_filtered_plot$chr=="chrY"&
+                                             !rna_seq_filtered_plot$chr=="chrX",],
+                     aes(log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),colour="black",
+                     geom = "step")+
+  coord_cartesian(xlim = c(-1.5,1.5))+
+  theme_bw()+
+  ylab("Fraction of genes with given log2FC")+
+  ggtitle("ERCC log2FC autosomes grey, x chrom orange")
+
+```
+
+# Implement m6A: RNA seq logFC and m6A per gene
+
+Do the genes with more m6A have a higher log2FC upon the STM2457 treatement?
+* Peaks that overlap with two or more genes are kept per gene (double). 
+* Genes with >5 m6A sites were merged into category >=5
+
+```{r m6A per log2FC, echo=FALSE, eval=TRUE}
+# Import mouse predicted (Körtel et al 2021, NAR)
+
+m6A_mesc <- readRDS("mESC_male_TPMs_protein_coding.rds")
+
+# Filter for minimal expression
+
+m6A_mesc <- m6A_mesc[m6A_mesc$mean>1,]
+
+#Annotate log2FC
+m6A_mesc$log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO=NA
+
+for (i in 1:nrow(m6A_mesc)){m6A_mesc[i,]$log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO= rna_seq[rna_seq$gene_id==rownames(m6A_mesc[i,]),]$log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO}
+
+
+
+#ggplot(m6A_mesc)+
+ # geom_boxplot(aes(x=factor(nr_m6A_in_gene), y=log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),outlier.shape = NA)+
+  #ylab("Log2FC STM over DMSO")+
+  #coord_cartesian(ylim = c(-2, 2)) +
+  #  ggtitle(paste0("mean FPKM WT >1; n. genes:", nrow(m6A_mesc[m6A_mesc$mean>1,])))+
+ # theme_bw()
+
+# Annotate >5 m6A into >=5
+m6A_mesc_modified <- m6A_mesc
+m6A_mesc_modified[m6A_mesc_modified$nr_m6A_in_gene>5,]$nr_m6A_in_gene <- 5
+table(m6A_mesc_modified$nr_m6A_in_gene)
+
+ggplot(m6A_mesc_modified[m6A_mesc_modified$mean>1,])+
+  geom_boxplot(aes(x=factor(nr_m6A_in_gene), y=log2.fold.change..MLE...group.mESC.STM2457.vs.mESC.DMSO),outlier.shape = NA)+
+  ylab("Log2FC STM over DMSO")+
+  xlab("Nr of m6A in gene")+
+  coord_cartesian(ylim = c(-2, 2)) +
+    ggtitle(paste0("mean miCLIP TPM>1; n. genes:", nrow(m6A_mesc_modified[m6A_mesc_modified$mean>1,])))+
+  theme_bw()
+
+
+```
+
+# Pluripotency expression controls
+
+Make sure that the expression of pluripotency factors remain the same upon STM2457 treatment. 
+
+```{r Pluripotency, echo=FALSE, message=FALSE, warning=FALSE}
+## ## ## ## ## ## ## ## ## ## 
+
+## Pluripotency factors
+
+gene_list <- c(# inner cell mass
+  "Pou5f1", "Nanog", "Sox2", "Klf2", 
+  # general mESC pluri
+  "Klf4", "Esrrb", "Tfcp2l1" , "Dppa3", "Nr0b1",
+  #Ectoderm
+  "Sox3", "Pou3f1", "Otx2", "Fgf5", 
+  #primitive endoderm
+  "Gata4", "Gata6", "Sox17" ,"Foxa2",
+  #Mesendoderm
+  "Eomes", "T")
+
+
+subset<-rna_seq[rna_seq$gene_name%in%gene_list,]
+
+subset_dset_DMSO1<- data.frame(FPKM = log10(subset$mESC_DMSO_1.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_DMSO_1_FPKM")
+subset_dset_DMSO2<- data.frame(FPKM = log10(subset$mESC_DMSO_2.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_DMSO_2_FPKM")
+subset_dset_DMSO3<- data.frame(FPKM = log10(subset$mESC_DMSO_3.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_DMSO_3_FPKM")
+subset_dset_DMSO4<- data.frame(FPKM = log10(subset$mESC_DMSO_4.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_DMSO_4_FPKM")
+
+
+subset_dset_STM1<- data.frame(FPKM = log10(subset$mESC_STM2457_1.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_STM2457_1_FPKM")
+subset_dset_STM2<- data.frame(FPKM = log10(subset$mESC_STM2457_2.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_STM2457_2.robustFPKM")
+subset_dset_STM3<- data.frame(FPKM = log10(subset$mESC_STM2457_3.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_STM2457_3.robustFPKM")
+subset_dset_STM4<- data.frame(FPKM = log10(subset$mESC_STM2457_4.robustFPKM),
+                            gene=subset$gene_name,
+                       dset="mESC_STM2457_4.robustFPKM")
+
+
+subset_all <- rbind(subset_dset_DMSO1,subset_dset_DMSO2,subset_dset_DMSO3,subset_dset_DMSO4,
+                    subset_dset_STM1,subset_dset_STM2,subset_dset_STM3,subset_dset_STM4)
+
+
+ggplot(subset_all, aes(x=dset,y=factor(gene, levels=gene_list), fill=FPKM)) + 
+  geom_tile()+
+  ylab("Gene")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  scale_fill_distiller(palette = "RdYlBu")+
+  ggtitle("male 24hr mESC")
+
+
+```
+
+# X-to-autosome expression ratios
+
+In order to identify expression ratios from X to A genes, there are different approaches to do so. We will base our analysis on publications that have shown how to filter for genes and calculate the mean expression (https://www.nature.com/articles/ng.948.pdf).
+
++ Plot an ECDF with the RPKM distribution 
+
+```{r X:A ratio ECDF, echo=FALSE,  warning =FALSE, message=FALSE}
+#Calculate mean expression per condition
+rna_seq$mean_FPKM_DMSO = (rna_seq$mESC_DMSO_1.robustFPKM+
+                                    rna_seq$mESC_DMSO_2.robustFPKM+
+                                    rna_seq$mESC_DMSO_3.robustFPKM+
+                                    rna_seq$mESC_DMSO_4.robustFPKM)/4
+
+rna_seq$mean_FPKM_STM = (rna_seq$mESC_STM2457_1.robustFPKM+
+                                    rna_seq$mESC_STM2457_2.robustFPKM+
+                                    rna_seq$mESC_STM2457_3.robustFPKM+
+                                    rna_seq$mESC_STM2457_4.robustFPKM)/4
+
+
+rna_seq <- rna_seq[rna_seq$chr%in%level_order_mouse,]
+
+rna_seq$autosome <- "autosome"
+rna_seq[rna_seq$chr=="chrX",]$autosome <- "chrX"
+
+artifical_x_double <- rna_seq[rna_seq$chr=="chrX",]
+artifical_x_double$mean_FPKM_DMSO <- artifical_x_double$mean_FPKM_DMSO*2
+artifical_x_double$autosome <- "chrX_double"
+
+rna_seq_double <- rbind(rna_seq,artifical_x_double)
+
+
+
+ggplot(rna_seq_double[rna_seq_double$mean_FPKM_DMSO>1,])+
+  stat_ecdf(aes(x=log10(mean_FPKM_DMSO), color=autosome))+
+  ggtitle("Mean FPKM >1")+
+  xlab("Expression RPKM (log10)")+
+  ylab("Cummulative fraction of genes with given log2FC")+
+  theme_bw()
+
+
+
+
+
+
+```
+
+# X-to-A ratio with increasing expression filter
+
+
+In this article, they calculated the median expression ratio by bootstrapping. 
+
+Non-Canonical and Sexually Dimorphic X Dosage Compensation States in the Mouse and Human Germline (PMID: 28132849)
+
+__X:A ratios with 95% confidence intervals were calculated using the pairwiseCI package in R using ’Median.ratio’ with 10,000 bootstrap replications.__
+```{r X:A ratio bootstrapping, echo=FALSE,  warning =FALSE, message=FALSE, eval=True}
+
+median_ratio_bootstrap <- function(rna_seq,name){
+
+
+  ratio_DMSO_over_0<-data.frame(Median.ratio(rna_seq[rna_seq$mean_FPKM_DMSO>0&rna_seq$autosome=="chrX",]$mean_FPKM_DMSO,
+               rna_seq[rna_seq$mean_FPKM_DMSO>0&rna_seq$autosome=="Autosome",]$mean_FPKM_DMSO, conf.level=0.95, alternative="two.sided", R=10000))
+  ratio_DMSO_over_0$dset = "ratio_DMSO_over_0"
+  ratio_DMSO_over_0$RPKM = ">0"
+  ratio_DMSO_over_0$treatment = "DMSO"
+  ratio_DMSO_over_0$upper_conf = ratio_DMSO_over_0[2,]$conf.int
+  ratio_DMSO_over_0<-ratio_DMSO_over_0[1,]
+
+
+
+  ratio_DMSO_over_0_25<-data.frame(Median.ratio(rna_seq[rna_seq$mean_FPKM_DMSO>0.25&rna_seq$autosome=="chrX",]$mean_FPKM_DMSO,
+               rna_seq[rna_seq$mean_FPKM_DMSO>0.25&rna_seq$autosome=="Autosome",]$mean_FPKM_DMSO, conf.level=0.95, alternative="two.sided", R=10000))
+  ratio_DMSO_over_0_25$dset = "ratio_DMSO_over_0_25"
+  ratio_DMSO_over_0_25$RPKM = ">0.25"
+  ratio_DMSO_over_0_25$treatment = "DMSO"
+  ratio_DMSO_over_0_25$upper_conf = ratio_DMSO_over_0_25[2,]$conf.int
+  ratio_DMSO_over_0_25<-ratio_DMSO_over_0_25[1,]
+
+
+
+
+  ratio_DMSO_over_0_5<-data.frame(Median.ratio(rna_seq[rna_seq$mean_FPKM_DMSO>0.5&rna_seq$autosome=="chrX",]$mean_FPKM_DMSO,
+              rna_seq[rna_seq$mean_FPKM_DMSO>0.5&rna_seq$autosome=="Autosome",]$mean_FPKM_DMSO, conf.level=0.95, alternative="two.sided", R=10000))
+  ratio_DMSO_over_0_5$dset = "ratio_DMSO_over_0_5"
+  ratio_DMSO_over_0_5$RPKM = ">0.5"
+  ratio_DMSO_over_0_5$treatment = "DMSO"
+  ratio_DMSO_over_0_5$upper_conf = ratio_DMSO_over_0_5[2,]$conf.int
+  ratio_DMSO_over_0_5<-ratio_DMSO_over_0_5[1,]
+
+
+
+  ratio_DMSO_over_1<-data.frame(Median.ratio(rna_seq[rna_seq$mean_FPKM_DMSO>1&rna_seq$autosome=="chrX",]$mean_FPKM_DMSO,
+               rna_seq[rna_seq$mean_FPKM_DMSO>1&rna_seq$autosome=="Autosome",]$mean_FPKM_DMSO, conf.level=0.95, alternative="two.sided", R=10000))
+  ratio_DMSO_over_1$dset = "ratio_DMSO_over_1"
+  ratio_DMSO_over_1$RPKM = ">1"
+  ratio_DMSO_over_1$treatment = "DMSO"
+  ratio_DMSO_over_1$upper_conf = ratio_DMSO_over_1[2,]$conf.int
+  ratio_DMSO_over_1<-ratio_DMSO_over_1[1,]
+
+
+  all_radios <- rbind(ratio_DMSO_over_0,
+                     ratio_DMSO_over_0_25,
+                      
+                      ratio_DMSO_over_0_5,
+                      
+                      ratio_DMSO_over_1
+                      )
+  
+  return(all_radios)
+
+
+  }
+
+p_24h=median_ratio_bootstrap(rna_seq = rna_seq, name="rna_seq_male_24")
+
+
+ggplot(p_24h,aes(x=RPKM, y =estimate, color=treatment,ymin=conf.int, ymax=upper_conf))+
+    geom_point()+
+    geom_line()+
+    geom_errorbar(width=.1, alpha=0.5) +
+   theme_bw()+
+    coord_cartesian(ylim=c(0.5,2))+
+    ggtitle(paste0("rna_seq_male_24"))
+
+
+```
+
+
+
+
+# Session info {.unnumbered}
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
