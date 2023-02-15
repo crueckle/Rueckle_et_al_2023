@@ -1,0 +1,158 @@
+---
+title: "DNA Seq - binning"
+author:
+- name: Cornelia Rueckle
+output:
+  BiocStyle::pdf_document
+abstract: |
+  Estimate the copy number of chromosomes by counting reads per bins per chromosome.
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F, fig.path = "./figures/")
+```
+
+
+```{r package import, echo=FALSE, message=FALSE, warning=FALSE}
+## load libraries
+library(rtracklayer)
+#library(GenomicFeatures)
+library(gridExtra)
+library(ggplot2)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+library(cowplot)
+
+
+level_order_mouse <- c(paste("chr", seq(1:19), sep = ""), "chrX", "chrY", "chrM")
+
+
+```
+
+# Divide chromosomes in 100k bin windows and count reads
+
+In order to estimate chromosomal aberations, mapped reads are counted in 100k bins for each chromosome. Mapped reads are divided by library size.
+
+
+
+
+```{r make ranged from bam file, echo=FALSE, warning=FALSE, message=FALSE}
+#Import data 
+opt = data.frame(filepath="~/Documents/DNA_seq/female_clones/bam/filtered/")
+
+opt$projectprefix<- "imb_koenig_2022_02"
+
+##Import datasets
+dnaseq.files   <- list.files(opt$filepath,pattern="*.bam",full.names=F)
+dnaseq.data        <- lapply(paste0(opt$filepath,dnaseq.files),import)
+
+
+#peaks  <- lapply(peaks,keepStandardChromosomes,pruning.mode="coarse")
+
+names(dnaseq.data) <- gsub(paste0(opt$projectprefix,"_"),
+                     "",
+                     gsub(paste0(".cutadapt.unique.duprm.bam"),
+                          "",
+                          dnaseq.files))
+
+
+
+################################################################################################################
+
+#Make bam into granges
+df = lapply(dnaseq.data, function(x) data.frame(seqnames= seqnames(x),
+                strand= strand(x),
+                start= start(x),
+                end=end(x)))
+
+
+bam_granges <- lapply(df, makeGRangesFromDataFrame)
+
+
+
+
+
+#This is the real binning 
+seqlengths_musmusculus=seqlengths(BSgenome.Mmusculus.UCSC.mm10)
+seqlengths_musmusculus=seqlengths_musmusculus[level_order_mouse]
+
+tile_genome_musmus_100k <- tileGenome(seqlengths_musmusculus, tilewidth =100000, cut.last.tile.in.chrom = TRUE)
+
+
+#Annotate the number of reads per bin, Normalize by library size
+options(scipen = 999)
+overlaps_to_save <-lapply(bam_granges, function(x) df = data.frame(chr= seqnames(tile_genome_musmus_100k),
+                                                                   start=start(tile_genome_musmus_100k)-1,
+                                                                   end = end(tile_genome_musmus_100k),
+                                                           counts = countOverlaps(tile_genome_musmus_100k,x)))
+
+
+overlaps <-lapply(bam_granges, function(x) df = data.frame(start=start(tile_genome_musmus_100k),chr= seqnames(tile_genome_musmus_100k),
+                                                           overlaps = countOverlaps(tile_genome_musmus_100k,x)/length(x)))
+
+
+
+
+
+
+
+####################################################################################
+####################################################################################
+####################################################################################
+
+
+
+
+
+
+```
+
+
+# Plot ratios
+
+To get a easier estimate on the CNV, I calculated the ratio of mapped reads per chromosome and the overall mapped reads for all chromosomes. For this, each median of mapped reads per chromosome is divided by the median mapped reads of all chromosomes.
+```{r Ratio, echo=FALSE, warning=FALSE, message=FALSE}
+
+for (i in 1:length(overlaps)){overlaps[[i]]$median_reads <- median(overlaps[[i]]$overlaps)}
+
+for (i in 1:length(overlaps)){overlaps[[i]]$ratio <- overlaps[[i]]$overlaps/overlaps[[i]]$median_reads}
+
+
+
+chromosome_boxlpot<- function(data, i){
+ggplot(data=data[[i]], aes(x=chr, y=log2(ratio)))+
+  geom_boxplot(outlier.shape = NA)+
+    ylab("Ratio mapped reads (log2)")+
+    ggtitle((names(data[i]))) +
+    coord_cartesian(ylim = c(-1.5,1.5))+
+    theme_bw()+
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))->p
+  return(p)}
+
+
+plots <- lapply(1:length(overlaps), function(i) chromosome_boxlpot(overlaps,i))
+
+#plots
+
+
+cowplot::plot_grid(plotlist = plots[1:4], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[5:8], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[9:12], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[13:16], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[17:20], ncol = 2)
+
+```
+
+
+# Session info {.unnumbered}
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
