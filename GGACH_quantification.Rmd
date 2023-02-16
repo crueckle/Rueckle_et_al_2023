@@ -1,0 +1,442 @@
+---
+title: "GGACH motifs on different genes"
+author:
+- name: Cornelia Rueckle
+output:
+  BiocStyle::pdf_document
+abstract: |
+  Description of your vignette
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F, fig.path = "./")
+```
+
+```{r package import, echo=FALSE, message=FALSE, warning=FALSE}
+## load libraries
+library(rtracklayer)
+#library(IRanges)
+library(GenomicFeatures)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+#library(UpSetR)
+#library(ggpointdensity)
+#library(grid)
+#library(gridExtra)
+library(ggplot2)
+#library(reshape2)
+#library(grid)
+#library(kableExtra)#for tables
+#library(GGally)
+#library(optparse)
+#library(cowplot)
+#library(dplyr)
+library(stringr)
+#library(ComplexHeatmap)
+#library(ggridges)
+#library(UpSetR)
+
+
+
+level_order_mouse <- c(paste("chr", seq(1:19), sep = ""), "chrX")
+
+
+```
+
+```{r Pre-define functions, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+function_count_drach <-
+  function(ranges, BS.genome){
+  ranges$sequence <- getSeq(BS.genome,ranges)
+  ranges$nr_of_A = str_count(as.character(ranges$sequence), "[A]")
+  ranges$nr_of_DRACH = str_count(as.character(ranges$sequence), "[AGT][AG][A][C][ACT]")
+  ranges$nr_of_GGAC = str_count(as.character(ranges$sequence), "[G][G][A][C][ACT]")
+  ranges$exon_length = width(ranges)
+
+
+  ranges_df <- as.data.frame(unique(ranges))
+
+  ranges_by_gene = 
+   ranges_df %>% 
+   dplyr::group_by(gene_id) %>% 
+   dplyr::mutate(sumA = sum(nr_of_A))%>% 
+   dplyr::mutate(sumA_div_length = sumA/sum(exon_length))%>%
+    dplyr::mutate(sumDRACH = sum(nr_of_DRACH))%>% 
+   dplyr::mutate(sumDRACH_div_length = sumDRACH/sum(exon_length))%>%
+   dplyr::mutate(sumGGAC = sum(nr_of_GGAC))%>% 
+   dplyr::mutate(sumGGAC_div_length = sumGGAC/sum(exon_length))
+
+  return(ranges_by_gene)}
+
+```
+
+# Mouse annotation
+
++ Import mouse data
++ Filter for TSL
++ Filter for level
++ Filter for CCSID
++ Filter for longest transcript per gene 
++ Filter for protein coding 
+```{r mouse anno, echo=FALSE}
+
+mouse_anno = import("~/Documents/Annotations/gencode.vM23.chr_patch_hapl_scaff.annotation.gtf")
+mouse_anno$gene_id_reduced <- gsub("\\..*","",mouse_anno$gene_id)
+
+mouse_anno_filtered <- mouse_anno[!is.na(mouse_anno$transcript_type=="protein_coding")]
+
+##filter gtf file for protein coding genes
+#mouse_anno_filtered <- mouse_anno_filtered[!is.na(mcols(mouse_anno_filtered)$level<=2)]
+
+
+mouse_anno_filtered <-mouse_anno_filtered[!is.na(mouse_anno_filtered$transcript_support_level)]
+
+mouse_anno_filtered <-mouse_anno_filtered[!mouse_anno_filtered$transcript_support_level=="NA"]
+
+mouse_anno_filtered <- mouse_anno_filtered[mouse_anno_filtered$transcript_support_level<=3]
+
+####filter for level
+
+mouse_anno_filtered <- mouse_anno_filtered[mouse_anno_filtered$level<=2]
+
+#mouse_anno_filtered <- mouse_anno_filtered[!is.na(mouse_anno_filtered$transcript_support_level<=3)]
+
+
+mouse_anno_filtered <- mouse_anno_filtered[!is.na(mouse_anno_filtered$ccdsid)]
+
+#chose longest transcript per gene
+transcripts <- mouse_anno_filtered[mouse_anno_filtered$type=="transcript"]
+# order for length
+transcripts <-  transcripts[order(transcripts$gene_id, -width(transcripts))]
+# chose first if more than one 
+transcripts <- transcripts[!duplicated(transcripts$gene_id), ]    # Apply duplicated
+
+
+
+```
+
+## Filter for longest transcript
+```{r all transcripts mouse, echo=FALSE}
+# # # # # # # # # # # # # # # # 
+# # # # # #  MOUSE # # # # # # 
+# # # # # # # # # # # # # # # # 
+
+#mouse_anno
+#chose longest transcript per gene
+transcripts <- mouse_anno_filtered[mouse_anno_filtered$type=="transcript"]
+# order for length
+transcripts <-  transcripts[order(transcripts$gene_id, -width(transcripts))]
+# chose first if more than one 
+transcripts <- transcripts[!duplicated(transcripts$gene_id), ]    # Apply duplicated
+transcripts<- transcripts[seqnames(transcripts)%in%level_order_mouse]
+
+#length(transcripts)
+gene_length_table <- data.frame(length=width(transcripts),
+                                chr=seqnames(transcripts))
+
+```
+
+
+# Exon
+
+```{r Exon, echo=FALSE,  warning =FALSE, message=FALSE}
+
+# # # # # # # # # # # # # # # # 
+# # # # # #  Mouse EXONS# # # # 
+# # # # # # # # # # # # # # # # 
+
+# Get all Exons
+exons_mouse <- mouse_anno_filtered[mouse_anno_filtered$type=="exon"]
+# Filter them for longest transcript
+exons_mouse <- exons_mouse[exons_mouse$transcript_id%in%transcripts$transcript_id]
+# Check how many are left 
+exons_mouse <- unique(exons_mouse)
+paste0("Nr. of Exons Mouse: ", length(exons_mouse))
+
+######## ######## ######## 
+######## Count DRACH #####
+######## ######## ######## 
+
+mouse_exons_drach_by_gene<-function_count_drach(exons_mouse, BSgenome.Mmusculus.UCSC.mm10)
+
+nrow(mouse_exons_drach_by_gene)
+
+##### Merge with the chicken ortholog dataframe, to have mouse ID annotated ####
+##### Otherwise we cannot compare if we have matching orthologs in both exon datasets ####
+
+mouse_exons_drach_by_gene_df <- data.frame(Mouse_gene_id=mouse_exons_drach_by_gene$gene_id_reduced,
+                                           Mouse_nr_of_A_per_bp = mouse_exons_drach_by_gene$sumA_div_length,
+                 Mouse_nr_DRACH_per_bp = mouse_exons_drach_by_gene$sumDRACH_div_length,
+                Mouse_nr_GGAC_per_bp=mouse_exons_drach_by_gene$sumGGAC_div_length,
+                chr= mouse_exons_drach_by_gene$seqnames)
+
+mouse_exons_drach_by_gene_df <- unique(mouse_exons_drach_by_gene_df)
+
+
+####### Annotate chromosome X and autosomes 
+
+mouse_exons_drach_by_gene_df$Chrom <- "autosome"
+mouse_exons_drach_by_gene_df[mouse_exons_drach_by_gene_df$chr=="chrX",]$Chrom <- "X_chr"
+
+
+
+####################################################
+### ### ### ### PLOT ### ### ### ### ### ### ### ### 
+####################################################
+# # # # #  # # #  # GGAC
+
+ggplot(mouse_exons_drach_by_gene_df)+
+  geom_boxplot(aes(x=Chrom, y=Mouse_nr_GGAC_per_bp, fill=Chrom))
+
+ggplot(mouse_exons_drach_by_gene_df)+
+  geom_boxplot(aes(x=chr, y=Mouse_nr_GGAC_per_bp, fill=chr))
+ 
+
+
+```
+
+# 3' UTR Mouse 
+
+```{r UTR3p, echo=FALSE,  warning =FALSE, message=FALSE}
+
+
+
+# # # # # # # # # # # # # # # # 
+# # # # # #  Mouse 3UTR# # # # 
+# # # # # # # # # # # # # # # # 
+txdb = makeTxDbFromGRanges(mouse_anno_filtered)
+utr3p_mouse = threeUTRsByTranscript(txdb, use.names=T)
+utr3p_mouse = unlist(utr3p_mouse)
+
+utr3p_mouse <- utr3p_mouse[names(utr3p_mouse)%in%transcripts$transcript_id,]
+# columns(txdb)
+utr3p_mouse$transcript_id <- names(utr3p_mouse)
+
+keys<-names(utr3p_mouse)
+
+p=select(txdb, keys=keys, 
+                       columns="GENEID", 
+                       keytype="TXNAME")
+
+
+utr3p_mouse$gene_id <- p$GENEID
+
+
+names(utr3p_mouse) <- 1:length(utr3p_mouse)
+
+
+
+
+######## ######## ######## 
+######## Count DRACH #####
+######## ######## ######## 
+
+mouse_utr3p_drach_by_gene<-function_count_drach(utr3p_mouse, BSgenome.Mmusculus.UCSC.mm10)
+
+nrow(mouse_utr3p_drach_by_gene)
+
+mouse_utr3p_orthologs_annotated <- data.frame(Mouse_gene_id=mouse_utr3p_drach_by_gene$gene_id,
+                                           Mouse_nr_of_A_per_bp_UTR3P = mouse_utr3p_drach_by_gene$sumA_div_length,
+                 Mouse_nr_DRACH_per_bp_UTR3P = mouse_utr3p_drach_by_gene$sumDRACH_div_length,
+                Mouse_nr_GGAC_per_bp_UTR3P=mouse_utr3p_drach_by_gene$sumGGAC_div_length,
+                chr = mouse_utr3p_drach_by_gene$seqnames)
+
+mouse_utr3p_orthologs_annotated_df <- unique(mouse_utr3p_orthologs_annotated)
+
+
+
+# # # #  # ANNOTATE 
+
+
+mouse_utr3p_orthologs_annotated_df$Chrom <- "autosome"
+mouse_utr3p_orthologs_annotated_df[mouse_utr3p_orthologs_annotated_df$chr=="chrX",]$Chrom <- "X_chr"
+
+
+####################################################
+### ### ### ### PLOT ### ### ### ### ### ### ### ### 
+####################################################
+
+
+
+
+# # # # #  # # #  # GGAC
+
+ggplot(mouse_utr3p_orthologs_annotated_df)+
+  geom_boxplot(aes(x=Chrom, y=Mouse_nr_GGAC_per_bp_UTR3P, fill=Chrom))+
+  ggtitle("3' UTR")
+
+```
+
+# 5' UTR  Mouse
+```{r UTR5p, echo=FALSE,  warning =FALSE, message=FALSE}
+
+
+# # # # # # # # # # # # # # # # 
+# # # # # #  Mouse 3UTR# # # # 
+# # # # # # # # # # # # # # # # 
+txdb = makeTxDbFromGRanges(mouse_anno_filtered)
+utr5p_mouse = fiveUTRsByTranscript(txdb, use.names=T)
+utr5p_mouse = unlist(utr5p_mouse)
+
+utr5p_mouse <- utr5p_mouse[names(utr5p_mouse)%in%transcripts$transcript_id,]
+# columns(txdb)
+utr5p_mouse$transcript_id <- names(utr5p_mouse)
+
+keys<-names(utr5p_mouse)
+
+p=select(txdb, keys=keys, 
+                       columns="GENEID", 
+                       keytype="TXNAME")
+
+
+utr5p_mouse$gene_id <- p$GENEID
+
+names(utr5p_mouse) <- 1:length(utr5p_mouse)
+
+
+######## ######## ######## 
+######## Count DRACH #####
+######## ######## ######## 
+
+mouse_utr5p_drach_by_gene<-function_count_drach(utr5p_mouse, BSgenome.Mmusculus.UCSC.mm10)
+
+nrow(mouse_utr5p_drach_by_gene)
+
+##### Merge with the chicken ortholog dataframe, to have mouse ID annotated ####
+##### Otherwise we cannot compare if we have matching orthologs in both exon datasets ####
+
+mouse_utr5p_orthologs_annotated <- data.frame(Mouse_gene_id=mouse_utr5p_drach_by_gene$gene_id,
+                                           Mouse_nr_of_A_per_bp_utr5P = mouse_utr5p_drach_by_gene$sumA_div_length,
+                 Mouse_nr_DRACH_per_bp_utr5P = mouse_utr5p_drach_by_gene$sumDRACH_div_length,
+                Mouse_nr_GGAC_per_bp_utr5P=mouse_utr5p_drach_by_gene$sumGGAC_div_length,
+                chr= mouse_utr5p_drach_by_gene$seqnames)
+
+mouse_utr5p_orthologs_annotated_df <- unique(mouse_utr5p_orthologs_annotated)
+
+
+
+mouse_utr5p_orthologs_annotated_df$Chrom <- "autosome"
+mouse_utr5p_orthologs_annotated_df[mouse_utr5p_orthologs_annotated_df$chr=="chrX",]$Chrom <- "X_chr"
+
+
+####################################################
+### ### ### ### PLOT ### ### ### ### ### ### ### ### 
+####################################################
+
+# # # # #  # # #  # GGAC
+
+ggplot(mouse_utr5p_orthologs_annotated_df)+
+  geom_boxplot(aes(x=Chrom, y=Mouse_nr_GGAC_per_bp_utr5P, fill=Chrom))+
+  ggtitle("5' UTR")
+
+  
+```
+
+# CDS
+
+```{r CDS, echo=FALSE,  warning =FALSE, message=FALSE}
+
+# # # # # # # # # # # # # # # # 
+# # # # # #  Mouse CDS# # # # 
+# # # # # # # # # # # # # # # # 
+
+# Get all CDS
+CDS_mouse <- mouse_anno_filtered[mouse_anno_filtered$type=="CDS"]
+# Filter them for longest transcript
+CDS_mouse <- CDS_mouse[CDS_mouse$gene_id%in%transcripts$gene_id]
+# Check how many are left 
+CDS_mouse <- unique(CDS_mouse)
+paste0("Nr. of CDS Mouse: ", length(CDS_mouse))
+# Check CDS width
+
+
+######## ######## ######## 
+######## Count DRACH #####
+######## ######## ######## 
+
+mouse_CDS_drach_by_gene<-function_count_drach(CDS_mouse, BSgenome.Mmusculus.UCSC.mm10)
+
+nrow(mouse_CDS_drach_by_gene)
+
+##### Merge with the chicken ortholog dataframe, to have mouse ID annotated ####
+##### Otherwise we cannot compare if we have matching orthologs in both exon datasets ####
+
+mouse_CDS_drach_by_gene_df <- data.frame(Mouse_gene_id=mouse_CDS_drach_by_gene$gene_id_reduced,
+                                           Mouse_nr_of_A_per_bp = mouse_CDS_drach_by_gene$sumA_div_length,
+                 Mouse_nr_DRACH_per_bp = mouse_CDS_drach_by_gene$sumDRACH_div_length,
+                Mouse_nr_GGAC_per_bp=mouse_CDS_drach_by_gene$sumGGAC_div_length,
+                chr= mouse_CDS_drach_by_gene$seqnames)
+
+mouse_CDS_drach_by_gene_df <- unique(mouse_CDS_drach_by_gene_df)
+
+##
+
+
+mouse_CDS_drach_by_gene_df$Chrom <- "autosome"
+mouse_CDS_drach_by_gene_df[mouse_CDS_drach_by_gene_df$chr=="chrX",]$Chrom <- "X_chr"
+
+
+####################################################
+### ### ### ### PLOT ### ### ### ### ### ### ### ### 
+####################################################
+
+
+# # # # #  # # #  # GGAC
+
+ggplot(mouse_CDS_drach_by_gene_df)+
+  geom_boxplot(aes(x=Chrom, y=Mouse_nr_GGAC_per_bp, fill=Chrom))+
+  ggtitle("CDS")
+
+  
+```
+
+
+# all together
+
+
+```{r All, echo=FALSE,  warning =FALSE, message=FALSE}
+
+mouse_CDS_drach_by_gene_df$dset <- "CDS"
+
+mouse_exons_drach_by_gene_df$dset <- "Exons"
+
+mouse_utr5p_orthologs_annotated_df$dset <- "5' UTR"
+colnames(mouse_utr5p_orthologs_annotated_df) <- colnames(mouse_exons_drach_by_gene_df)
+mouse_utr3p_orthologs_annotated_df$dset <- "3' UTR"
+colnames(mouse_utr3p_orthologs_annotated_df) <- colnames(mouse_exons_drach_by_gene_df)
+
+
+all <- rbind(mouse_CDS_drach_by_gene_df,
+             mouse_exons_drach_by_gene_df,
+             mouse_utr5p_orthologs_annotated_df,
+             mouse_utr3p_orthologs_annotated_df)
+#
+paste0("CDS: ", nrow(mouse_CDS_drach_by_gene_df))
+
+paste0("Exons: ", nrow(mouse_exons_drach_by_gene_df))
+
+paste0("5UTR: ", nrow(mouse_utr5p_orthologs_annotated_df))
+
+paste0("3UTR: ", nrow(mouse_utr3p_orthologs_annotated_df))
+
+ggplot(all)+
+  geom_boxplot(aes(x=dset, y=Mouse_nr_GGAC_per_bp, fill=Chrom))+
+  ggtitle("GGAC per bp")+
+  coord_cartesian(ylim = c(0, 0.01))
+
+
+
+
+```
+
+# Session info {.unnumbered}
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
