@@ -1,0 +1,351 @@
+---
+title: "Numbers of m6A in transcripts, based on only predicted sites and within the whole transcript"
+author:
+- name: Cornelia Rueckle
+output:
+  BiocStyle::pdf_document:
+        keep_md: true
+        keep_tex: true
+abstract: |
+  Check number of m6A sites per transcript per chromosome.
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F, fig.path = "./figures/")
+```
+
+```{r package_import,  echo = FALSE, message=FALSE, warning=FALSE}
+
+
+
+#Load packages required for codes
+library(Rmisc)
+library(GenomicFeatures)
+library(rtracklayer)
+library(ggplot2)
+library(reshape)
+
+
+level_order_mouse <- c(paste("chr", seq(1:19), sep = ""), "chrX")
+```
+
+
+
+
+# mESC male miCLIP data
+
+Data from Körtel et al., 2021
+
+
+* Calculate transcript abundance on noC2T miCLIP reads using htseq-count
+* Calculate the mean transcript abundance per gene
+* Plot transcript abundance distribution to decide about bins
+* Decide about bins
+* Check how many m6A per bin
+
+```{r Transcript abundance, echo=FALSE, eval=TRUE}
+
+# load counts from htseq-count based on miCLIP2 reads (noC2T)
+counts = read.delim("~/Documents/Mardowns/Chromosomes/20210301_miCLIP-expression_bin/htseq/htseq_mESC_noc2t.out", header = FALSE, row.names = 1)
+n=nrow(counts)-5
+counts = counts[1:n,]
+##
+## calculate gene lengths
+##
+gtf <- import.gff("~/Documents/Annotations/gencode.vM23.chr_patch_hapl_scaff.annotation.gtf", format="gtf", feature.type="exon")
+gtf.flat <- unlist(reduce(split(gtf, elementMetadata(gtf)$gene_id)))
+gene.lengths <- tapply(width(gtf.flat), names(gtf.flat), sum)
+
+# make sure we have a gene_name column (needed as output in the report later)
+if(! "gene_name" %in% colnames(mcols(gtf))) {
+    if("gene_id" %in% colnames(mcols(gtf))) {
+        gtf$gene_name <- gtf$gene_id
+    } else {
+        gtf$gene_name <- NA
+    }
+}
+
+
+#Annotate gene length
+gene_length = data.frame(gene_lengths=gene.lengths[rownames(counts)])
+
+
+#Define  TPM function
+
+
+tpm <- function(counts, lengths) {
+  rate <- counts / lengths
+  rate / sum(rate, na.rm = TRUE) * 1e6
+}
+
+
+#TPM
+tpms <- apply(counts, 2, function(x) tpm(x, gene_length$gene_lengths))
+
+#head(sum(counts[,1]/gene_length$gene_lengths, na.rm = TRUE))
+
+tpms <- as.data.frame(tpms)
+
+###### Annotate chr
+df=data.frame(gene_id=names(gtf.flat),
+              chr= as.character(seqnames(gtf.flat)))
+df=unique(df)
+
+tpms$chr=NA
+tpms$chr=sapply(rownames(tpms), function(x) df[df$gene_id==x,]$chr)
+
+tpms$mean <- (tpms$V2+tpms$V3+tpms$V4)/3
+
+
+# Get gene annotation 
+mouse_gff=import("~/Documents/Annotations/gencode.vM23.chr_patch_hapl_scaff.annotation.gtf")
+
+
+genes <- mouse_gff[mouse_gff$type == "gene"]
+genes$level <- as.numeric(genes$level)
+genes <-  genes[order(genes$level, -width(genes))]
+
+df=data.frame(gene_id=genes$gene_id,
+              gene_type= genes$gene_type)
+df=unique(df)
+#Keep protein coding
+tpms$gene_type <- NA
+tpms$gene_type <- sapply(rownames(tpms), function(x) df[df$gene_id==x,]$gene_type)
+
+#table(tpms$gene_type)
+tpms<- tpms[tpms$gene_type == "protein_coding",]
+#table(tpms$gene_type)
+
+########################################################
+########################################################
+#########Annotate m6a per trs
+########################################################
+# Get gene annotation 
+
+genes <- mouse_gff[mouse_gff$type == "gene"]
+genes$level <- as.numeric(genes$level)
+genes <-  genes[order(genes$level, -width(genes))]
+
+##########
+
+
+# m6A sites from Körtel et al., 2021
+mesc_pred=readRDS("~/Documents/miCLIP/Prediction/new/mouse_mESC_m6A.rds")
+mesc_pred = keepStandardChromosomes(mesc_pred, pruning.mode = "coarse")
+
+# Annotate gene for m6A
+ov <- findOverlaps(mesc_pred, genes, select = "first")
+mesc_pred$gene_id <- genes$gene_id[ov]
+mesc_pred$gene_id[is.na(mesc_pred$gene_id)] <- "NO"
+mesc_pred$gene_type <- genes$gene_type[ov]
+
+
+
+# Get m6A per gene
+tpms=tpms[tpms$chr%in%level_order_mouse,]
+
+#Annotate number of m6a per gene
+
+tpms$nr_m6A_in_gene =0
+tpms$nr_m6A_in_gene<-sapply(rownames(tpms), function(x) length(mesc_pred[mesc_pred$gene_id==x]))
+
+
+tpms=tpms[tpms$chr%in%level_order_mouse,]
+
+# Filter for m6A sites with minimum expression
+tpms_filtered= tpms[tpms$mean>=1,]
+tpms_filtered$log10mean <- log10(tpms_filtered$mean)
+#table(tpms_filtered$gene_type)
+
+#Make expression bins and stratify genes accordingly
+bins = c(min(tpms_filtered$log10mean, na.rm = TRUE), seq(0.5,3,0.25))
+tpms_filtered$bin=findInterval(tpms_filtered$log10mean,bins)
+
+
+```
+## Count m6A in gene
+
+Only mesc predicted sites
+```{r Count m6A in gene, echo=FALSE, eval=TRUE, message=FALSE}
+
+#############bin wise 
+
+
+
+
+m6A_bin_summary <- summarySE(tpms_filtered, measurevar = "nr_m6A_in_gene",groupvars = "bin")
+
+ggplot(m6A_bin_summary, aes(x=bin, y=nr_m6A_in_gene))+
+  geom_point(colour="grey")+
+  geom_errorbar(aes(ymin=nr_m6A_in_gene-ci, ymax=nr_m6A_in_gene+ci), width=.1, colour="grey") +
+  geom_line(colour="grey")+
+  ggtitle(paste0(nrow(tpms), "; mESC mean number of m6A per bin, grey 95% conf. int."))->m6A_absolut
+
+m6A_absolut
+
+
+
+
+
+
+num = sum(m6A_bin_summary$N)
+ggplot()+
+  geom_col(data=m6A_bin_summary, aes(x=as.numeric(bin), y=(N/sum(N)*20)), alpha=0.6, fill="orange")+
+    #Annotate number of genes for histogram
+    geom_text(data=m6A_bin_summary,aes(x=as.numeric(bin),y=(N/sum(N)*20),label=N,vjust=0, angle=90))+
+    geom_point(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene),colour="grey")+
+    #Annotate confidence interval
+    geom_errorbar(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene,ymin=nr_m6A_in_gene-ci, ymax=nr_m6A_in_gene+ci), width=.1, colour="grey", alpha=0.7) +
+    geom_line(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene),colour="grey")+
+    #Annotate mean for all chromosomes
+   # geom_point(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene), colour="grey", alpha=0.6)+
+   # geom_line(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene),colour="grey", alpha=0.6)+
+    scale_y_continuous(limits=c(0, 10), name = expression("nr_m6A_in_gene"), sec.axis = sec_axis(~ . *5  , name = " Percent genes in bin"))+
+    theme(axis.title.y.right = element_text(color = "orange"))+
+    ggtitle(paste0(" Nr. genes ", num))
+
+
+```
+
+## Chromosome wise
+```{r Expression bin plot per chromosome mesc, echo=FALSE, warning=FALSE, message=FALSE}
+tpms_filtered<-tpms_filtered[tpms_filtered$chr%in%level_order_mouse,]
+
+
+split_chr =split(tpms_filtered, tpms_filtered$chr)
+
+
+mean_m6a_per_chromosome<-lapply(split_chr, function(x) summarySE(x, groupvars = "bin", "nr_m6A_in_gene"))
+
+
+plot_function <- function(p, title){
+  num = sum(p$N)
+  ggplot()+
+    geom_col(data=p, aes(x=as.numeric(bin), y=(N/sum(N)*10)), alpha=0.6, fill="grey")+
+    #Annotate number of genes for histogram
+    geom_text(data=p,aes(x=as.numeric(bin),y=(N/sum(N)*10),label=N,vjust=0, angle=90))+
+    geom_point(data=p, aes(x=as.numeric(bin), y=nr_m6A_in_gene))+
+    #Annotate confidence interval
+    geom_errorbar(data=p, aes(x=as.numeric(bin), y=nr_m6A_in_gene,ymin=nr_m6A_in_gene-ci, ymax=nr_m6A_in_gene+ci), width=.1, colour="black", alpha=0.7) +
+    geom_line(data=p, aes(x=as.numeric(bin), y=nr_m6A_in_gene))+
+    #Annotate mean for all chromosomes
+    geom_point(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene), colour="grey", alpha=0.6)+
+    geom_line(data=m6A_bin_summary, aes(x=as.numeric(bin), y=nr_m6A_in_gene),colour="grey", alpha=0.6)+
+    scale_y_continuous(limits=c(0, 10), name = expression("nr_m6A_in_gene"), sec.axis = sec_axis(~ . *10  , name = "Percent genes in bin"))+
+    theme_classic()+
+    ggtitle(paste0(title, " Nr. genes ", num))}
+
+
+
+plots =lapply(level_order_mouse,function(i) plot_function(mean_m6a_per_chromosome[[i]], i))
+
+cowplot::plot_grid(plotlist = plots[1:4], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[5:8], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[9:12], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[13:16], ncol = 2)
+
+cowplot::plot_grid(plotlist = plots[17:20], ncol = 2)
+
+
+
+```
+
+
+## Plot Fold change 
+
++ Get from each bin the fold change ALL/ind_CHR
++ Get the average fold change 
++ make it log2 -> plot 
+
+
+```{r Average fold_change log mesc, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+#Average of all chromosomes
+
+m6A_bin_summary_reduced = m6A_bin_summary[3:8,]
+
+
+
+#which chromosomes
+# Filter out weird chromosomes
+
+mean_m6a_per_chromosome = mean_m6a_per_chromosome[level_order_mouse]
+#Substract individual crhomo values from mean
+
+distance_per_chromosome <-lapply(mean_m6a_per_chromosome, function(x) x[3:8,]$nr_m6A_in_gene/m6A_bin_summary_reduced$nr_m6A_in_gene)
+
+
+distance_per_chromosome_df=melt(distance_per_chromosome)
+
+
+distance_per_chromosome_df$bin=NA
+distance_per_chromosome_df$bin = rep(3:8, nrow(distance_per_chromosome_df)/6)
+
+
+
+#Annotate mean distance
+distance_per_chromosome_df$mean_foldchange <- NA
+
+for (i in 1:nrow(distance_per_chromosome_df)){distance_per_chromosome_df[i,]$mean_foldchange=
+  mean(distance_per_chromosome_df[distance_per_chromosome_df$L1==distance_per_chromosome_df[i,]$L1,]$value)}
+
+#Annotate mean sd
+
+distance_per_chromosome_df$mean_foldchange_sd <- NA
+
+
+for (i in 1:nrow(distance_per_chromosome_df)){distance_per_chromosome_df[i,]$mean_foldchange_sd=
+  sd(distance_per_chromosome_df[distance_per_chromosome_df$L1==distance_per_chromosome_df[i,]$L1,]$value)}
+
+
+
+distance_per_chromosome_df=distance_per_chromosome_df[order(distance_per_chromosome_df$mean_foldchange, decreasing = TRUE),]
+#Plot
+
+####
+
+
+
+ggplot(distance_per_chromosome_df)+
+  geom_boxplot(aes(x=factor(L1, levels = level_order_mouse), y=log2(value)), alpha = 0.2, outlier.shape = NA, color = "orange")+
+  geom_jitter(aes(x=factor(L1, levels = level_order_mouse), y=log2(value)), alpha = 0.2)+
+  ggtitle("mESC male")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  geom_point(aes(x=factor(L1, levels = level_order_mouse), y=log2(mean_foldchange), color="red"))
+
+
+
+distance_per_chromosome_df_mod = data.frame(chr = distance_per_chromosome_df$L1,
+                                            mean_FC = distance_per_chromosome_df$mean_foldchange)
+distance_per_chromosome_df_mod=unique(distance_per_chromosome_df_mod)
+  
+distance_per_chromosome_df_mod$plot <- "all"
+distance_per_chromosome_df_mod$dset <- "autosomes"
+distance_per_chromosome_df_mod[distance_per_chromosome_df_mod$chr=="chrX",]$dset <- "chrX"
+  
+distance_per_chromosome_df_mod <- unique(distance_per_chromosome_df_mod)
+
+  
+  
+ggplot(distance_per_chromosome_df_mod, aes(x=plot, y=log2(mean_FC), color=dset, label=chr))+
+  geom_jitter(position = position_jitter(seed = 1))+  
+  theme_bw()+
+  geom_text(position = position_jitter(seed = 1))+
+  #theme(aspect.ratio = 1)+
+  ggtitle("mESC")
+
+
+
+```
+
+# Session info {.unnumbered}
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
